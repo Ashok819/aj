@@ -15,10 +15,10 @@
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
 
 <style>
-  video, canvas {
-    position: absolute;
-    top: 0;
-    left: 0;
+  video {
+    width: 100%;
+    border-radius: 12px;
+    background: black;
   }
 </style>
 </head>
@@ -26,45 +26,43 @@
 <body class="bg-gray-100">
 
 <!-- HEADER -->
-<div class="p-3 font-bold text-lg">Avalok(a) – Live Vision Intelligence</div>
-
-<!-- START CAMERA -->
-<button id="startCam"
-  class="m-3 px-4 py-2 bg-blue-600 text-white rounded">
-  ▶ Start Camera
-</button>
-
-<!-- CAMERA -->
-<div class="relative mx-3 max-w-md">
-  <video id="video" playsinline class="w-full rounded bg-black"></video>
-  <canvas id="overlay"></canvas>
+<div class="p-3 font-bold text-lg text-center">
+  Avalok(a) – Live Vision Intelligence
 </div>
 
-<!-- DETAILS BELOW CAMERA -->
+<!-- START BUTTON -->
+<div class="flex justify-center">
+  <button id="startCam"
+    class="mb-3 px-6 py-2 bg-blue-600 text-white rounded-lg">
+    ▶ Start Camera
+  </button>
+</div>
+
+<!-- CAMERA CARD -->
+<div class="mx-3 bg-white rounded-xl shadow p-2">
+  <video id="video" playsinline></video>
+</div>
+
+<!-- DETAILS -->
 <div id="cards" class="p-3 space-y-3"></div>
 
 <script>
 const video = document.getElementById("video");
-const canvas = document.getElementById("overlay");
-const ctx = canvas.getContext("2d");
 const cards = document.getElementById("cards");
 
 let model;
 let poseLandmarks = null;
 const tracked = {};
 
-/* -------- Pose -------- */
+/* ---------------- Pose ---------------- */
 const pose = new Pose({
   locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
 });
 pose.setOptions({ modelComplexity:0, smoothLandmarks:true });
 pose.onResults(r => poseLandmarks = r.poseLandmarks);
 
-/* -------- Helpers -------- */
+/* ---------------- Helpers ---------------- */
 const speedLabel = s => s<10?"Still":s<50?"Slow":s<150?"Moving":"Fast";
-
-const direction = (dx,dy) =>
-  Math.abs(dx)>Math.abs(dy) ? (dx>0?"Right →":"← Left") : (dy>0?"Down ↓":"↑ Up");
 
 function posture(speed){
   if(!poseLandmarks) return "Unknown";
@@ -75,7 +73,12 @@ function posture(speed){
 }
 
 function dominantColor(x,y,w,h){
-  const d = ctx.getImageData(x,y,w,h).data;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(video, x, y, w, h, 0, 0, w, h);
+  const d = ctx.getImageData(0,0,w,h).data;
   let r=0,g=0,b=0,c=0;
   for(let i=0;i<d.length;i+=40){
     r+=d[i]; g+=d[i+1]; b+=d[i+2]; c++;
@@ -90,11 +93,7 @@ function dominantColor(x,y,w,h){
   return "Mixed";
 }
 
-const overlap=(a,b)=>!(
-  a.x+a.w<b.x||a.x>b.x+b.w||a.y+a.h<b.y||a.y>b.y+b.h
-);
-
-/* -------- Start Camera (UNIVERSAL) -------- */
+/* ---------------- Start Camera ---------------- */
 document.getElementById("startCam").onclick = async () => {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -104,9 +103,6 @@ document.getElementById("startCam").onclick = async () => {
     video.srcObject = stream;
     await video.play();
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-
     model = await cocoSsd.load();
     loop();
 
@@ -115,9 +111,8 @@ document.getElementById("startCam").onclick = async () => {
   }
 };
 
-/* -------- Main Loop -------- */
+/* ---------------- Main Loop ---------------- */
 async function loop(){
-  ctx.clearRect(0,0,canvas.width,canvas.height);
   const detections = await model.detect(video);
   const now = performance.now();
   cards.innerHTML = "";
@@ -127,45 +122,30 @@ async function loop(){
     const cx=x+w/2, cy=y+h/2;
     const id=d.class+"-"+Math.round(cx);
 
-    if(!tracked[id]) tracked[id]={x:cx,y:cy,t:now,s:0,dx:0,dy:0};
+    if(!tracked[id]) tracked[id]={x:cx,y:cy,t:now,s:0};
     const o=tracked[id];
     const dt=(now-o.t)/1000;
-    o.dx=cx-o.x; o.dy=cy-o.y;
-    o.s=dt>0?Math.sqrt(o.dx**2+o.dy**2)/dt:0;
+    o.s = dt>0 ? Math.hypot(cx-o.x, cy-o.y)/dt : 0;
     o.x=cx; o.y=cy; o.t=now;
 
-    ctx.strokeStyle="lime";
-    ctx.lineWidth=2;
-    ctx.strokeRect(x,y,w,h);
-    ctx.fillStyle="lime";
-    ctx.fillText(d.class,x+4,y+14);
-
-    let shirt="", pant="", holding="None";
+    let extra="";
     if(d.class==="person"){
-      shirt = dominantColor(x,y,w,h/2);
-      pant  = dominantColor(x,y+h/2,w,h/2);
-      for(const o2 of detections){
-        if(o2.class!=="person"){
-          const [ox,oy,ow,oh]=o2.bbox;
-          if(overlap({x,y,w,h},{x:ox,y:oy,w:ow,h:oh}))
-            holding=o2.class;
-        }
-      }
-    }
-
-    const card=document.createElement("div");
-    card.className="bg-white p-3 rounded shadow";
-    card.innerHTML=`
-      <div class="font-bold">${d.class.toUpperCase()}</div>
-      <div>Speed: ${speedLabel(o.s)}</div>
-      <div>Direction: ${direction(o.dx,o.dy)}</div>
-      ${d.class==="person"?`
+      const shirt = dominantColor(x,y,w,h/2);
+      const pant  = dominantColor(x,y+h/2,w,h/2);
+      extra = `
         <div>Posture: ${posture(o.s)}</div>
         <div>Shirt: ${shirt}</div>
         <div>Pant: ${pant}</div>
-        <div>Holding: ${holding}</div>
-      `:""}
-      <div class="text-xs text-gray-500">
+      `;
+    }
+
+    const card=document.createElement("div");
+    card.className="bg-white rounded-xl shadow p-4";
+    card.innerHTML=`
+      <div class="font-bold text-lg capitalize">${d.class}</div>
+      <div>Speed: ${speedLabel(o.s)}</div>
+      ${extra}
+      <div class="text-xs text-gray-500 mt-1">
         Confidence ${(d.score*100).toFixed(1)}%
       </div>
     `;
