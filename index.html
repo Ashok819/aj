@@ -1,168 +1,145 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Avalok(a) Vision</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Avalok Vision – Motion Intelligence</title>
 
-<script src="https://cdn.tailwindcss.com"></script>
-
-<!-- TensorFlow -->
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
-<!-- MediaPipe Pose -->
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
-
 <style>
-  video {
-    width: 100%;
-    background: black;
-    border-radius: 16px;
-  }
+body{margin:0;background:#020617;color:#fff;font-family:system-ui}
+.container{padding:10px;display:flex;flex-direction:column;gap:12px}
+.card{background:#0f172a;border-radius:14px;padding:12px}
+.card-title{font-size:13px;opacity:.7;margin-bottom:6px}
+video{width:100%;height:55vh;object-fit:cover;border-radius:12px}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.value{font-size:20px;color:#38bdf8;font-weight:700}
+.btn{background:#1e293b;border:none;color:#fff;padding:6px 10px;border-radius:8px}
+canvas{position:absolute;top:0;left:0}
 </style>
 </head>
 
-<body class="bg-gray-100">
+<body>
 
-<!-- HEADER -->
-<div class="p-2 text-center font-semibold text-base">
-  Avalok(a) – Live Vision
+<div class="container">
+
+  <!-- CAMERA CARD -->
+  <div class="card">
+    <div class="card-title">Live Camera</div>
+    <video id="cam" autoplay playsinline></video>
+    <button class="btn" onclick="startCalibration()">Calibrate 1 Meter</button>
+  </div>
+
+  <!-- PEOPLE CARDS -->
+  <div id="people" class="grid"></div>
+
 </div>
 
-<!-- START CAMERA -->
-<div class="flex justify-center mb-2">
-  <button id="startCam"
-    class="px-6 py-2 bg-blue-600 text-white rounded-lg">
-    ▶ Start Camera
-  </button>
-</div>
-
-<!-- BIG CAMERA CARD -->
-<div class="mx-3 bg-white rounded-2xl shadow p-2">
-  <video
-    id="video"
-    playsinline
-    class="h-[65vh] md:h-[55vh] object-cover">
-  </video>
-</div>
-
-<!-- DETAILS BELOW CAMERA -->
-<div id="cards" class="p-3 space-y-3"></div>
+<canvas id="draw"></canvas>
 
 <script>
-const video = document.getElementById("video");
-const cards = document.getElementById("cards");
+const video = document.getElementById("cam");
+const canvas = document.getElementById("draw");
+const ctx = canvas.getContext("2d");
+const peopleDiv = document.getElementById("people");
 
 let model;
-let poseLandmarks = null;
-const tracked = {};
+let persons = {};
+let pixelsPerMeter = null;
 
-/* ---------- MediaPipe Pose ---------- */
-const pose = new Pose({
-  locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
+/* ---------- CAMERA ---------- */
+async function startCamera(){
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video:{facingMode:"environment"}, audio:false
+  });
+  video.srcObject = stream;
+  return new Promise(r=>video.onloadedmetadata=r);
+}
+
+/* ---------- CALIBRATION ---------- */
+let p1=null, p2=null, calibrating=false;
+
+function startCalibration(){
+  calibrating=true;
+  p1=p2=null;
+  alert("Draw a line representing 1 meter");
+}
+
+canvas.addEventListener("mousedown",e=>{
+  if(!calibrating) return;
+  p1={x:e.offsetX,y:e.offsetY};
 });
-pose.setOptions({ modelComplexity: 0, smoothLandmarks: true });
-pose.onResults(r => poseLandmarks = r.poseLandmarks);
+canvas.addEventListener("mouseup",e=>{
+  if(!calibrating) return;
+  p2={x:e.offsetX,y:e.offsetY};
+  const d=Math.hypot(p2.x-p1.x,p2.y-p1.y);
+  pixelsPerMeter=d;
+  calibrating=false;
+  alert("Calibration complete");
+});
 
-/* ---------- Helpers ---------- */
-const speedLabel = s =>
-  s < 10 ? "Still" : s < 50 ? "Slow" : s < 150 ? "Moving" : "Fast";
+function drawLine(){
+  if(p1&&calibrating){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.strokeStyle="red";
+    ctx.lineWidth=3;
+    ctx.beginPath();
+    ctx.moveTo(p1.x,p1.y);
+    ctx.lineTo(event.offsetX,event.offsetY);
+    ctx.stroke();
+  }
+}
 
-function posture(speed) {
-  if (!poseLandmarks) return "Unknown";
-  if (poseLandmarks[23].y > 0.65) return "Sitting";
-  if (speed < 10) return "Standing";
-  if (speed < 120) return "Walking";
+/* ---------- SPEED + ACTION ---------- */
+function kmh(prev,curr,dt){
+  if(!pixelsPerMeter) return 0;
+  const px=Math.hypot(curr.x-prev.x,curr.y-prev.y);
+  return ((px/pixelsPerMeter)/dt)*3.6;
+}
+function action(speed){
+  if(speed<1) return "Standing";
+  if(speed<6) return "Walking";
   return "Running";
 }
 
-function dominantColor(x, y, w, h) {
-  const c = document.createElement("canvas");
-  c.width = w; c.height = h;
-  const cx = c.getContext("2d");
-  cx.drawImage(video, x, y, w, h, 0, 0, w, h);
-  const d = cx.getImageData(0, 0, w, h).data;
+/* ---------- MAIN LOOP ---------- */
+async function detect(time){
+  const preds = await model.detect(video);
+  peopleDiv.innerHTML="";
 
-  let r=0,g=0,b=0,cnt=0;
-  for (let i=0;i<d.length;i+=40){
-    r+=d[i]; g+=d[i+1]; b+=d[i+2]; cnt++;
-  }
-  r/=cnt; g/=cnt; b/=cnt;
+  preds.filter(p=>p.class==="person").forEach((p,i)=>{
+    const [x,y,w,h]=p.bbox;
+    const c={x:x+w/2,y:y+h/2};
 
-  if (r>200 && g<100 && b<100) return "Red";
-  if (r<100 && g>200 && b<100) return "Green";
-  if (r<100 && g<100 && b>200) return "Blue";
-  if (r>200 && g>200 && b<100) return "Yellow";
-  if (r>200 && g>200 && b>200) return "White";
-  if (r<80 && g<80 && b<80) return "Black";
-  return "Mixed";
+    if(!persons[i]) persons[i]={prev:c,time};
+
+    const dt=(time-persons[i].time)/1000;
+    const speed=kmh(persons[i].prev,c,dt);
+
+    persons[i]={prev:c,time};
+
+    peopleDiv.innerHTML+=`
+      <div class="card">
+        <div class="card-title">Person ${i+1}</div>
+        <div class="value">${speed.toFixed(2)} km/hr</div>
+        <div>${action(speed)}</div>
+      </div>`;
+  });
+
+  requestAnimationFrame(detect);
 }
 
-/* ---------- Start Camera (Universal) ---------- */
-document.getElementById("startCam").onclick = async () => {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: "environment" } },
-      audio: false
-    });
-    video.srcObject = stream;
-    await video.play();
-
-    model = await cocoSsd.load();
-    loop();
-  } catch (e) {
-    alert("Camera error: " + e.name);
-  }
-};
-
-/* ---------- Main Loop ---------- */
-async function loop() {
-  const detections = await model.detect(video);
-  const now = performance.now();
-  cards.innerHTML = "";
-
-  for (const d of detections) {
-    const [x,y,w,h] = d.bbox;
-    const cx = x + w/2;
-    const cy = y + h/2;
-    const id = d.class + "-" + Math.round(cx);
-
-    if (!tracked[id])
-      tracked[id] = { x: cx, y: cy, t: now, s: 0 };
-
-    const o = tracked[id];
-    const dt = (now - o.t) / 1000;
-    o.s = dt > 0 ? Math.hypot(cx - o.x, cy - o.y) / dt : 0;
-    o.x = cx; o.y = cy; o.t = now;
-
-    let extra = "";
-    if (d.class === "person") {
-      const shirt = dominantColor(x, y, w, h/2);
-      const pant  = dominantColor(x, y+h/2, w, h/2);
-      extra = `
-        <div>Posture: ${posture(o.s)}</div>
-        <div>Shirt: ${shirt}</div>
-        <div>Pant: ${pant}</div>
-      `;
-    }
-
-    const card = document.createElement("div");
-    card.className = "bg-white rounded-xl shadow p-4";
-    card.innerHTML = `
-      <div class="font-semibold text-lg capitalize">${d.class}</div>
-      <div>Speed: ${speedLabel(o.s)}</div>
-      ${extra}
-      <div class="text-xs text-gray-500 mt-1">
-        Confidence ${(d.score*100).toFixed(1)}%
-      </div>
-    `;
-    cards.appendChild(card);
-  }
-
-  pose.send({ image: video });
-  requestAnimationFrame(loop);
-}
+/* ---------- INIT ---------- */
+(async()=>{
+  await startCamera();
+  canvas.width=video.videoWidth;
+  canvas.height=video.videoHeight;
+  model=await cocoSsd.load();
+  requestAnimationFrame(detect);
+})();
 </script>
+
 </body>
 </html>
