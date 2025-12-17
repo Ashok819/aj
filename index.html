@@ -1,8 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Avalok(a) Vision Lab</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Avalok(a) Vision</title>
 
 <script src="https://cdn.tailwindcss.com"></script>
 
@@ -12,27 +13,35 @@
 
 <!-- MediaPipe Pose -->
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
 
 <style>
-  body { margin:0 }
   video, canvas {
-    position:absolute;
-    top:0; left:0;
+    position: absolute;
+    top: 0;
+    left: 0;
   }
 </style>
 </head>
 
 <body class="bg-gray-100">
+
+<!-- HEADER -->
 <div class="p-3 font-bold text-lg">Avalok(a) – Live Vision Intelligence</div>
 
-<div class="flex">
-  <div class="relative">
-    <video id="video" autoplay playsinline width="640" height="480"></video>
-    <canvas id="overlay" width="640" height="480"></canvas>
-  </div>
-  <div id="cards" class="w-96 p-3 space-y-3"></div>
+<!-- START CAMERA -->
+<button id="startCam"
+  class="m-3 px-4 py-2 bg-blue-600 text-white rounded">
+  ▶ Start Camera
+</button>
+
+<!-- CAMERA -->
+<div class="relative mx-3 max-w-md">
+  <video id="video" playsinline class="w-full rounded bg-black"></video>
+  <canvas id="overlay"></canvas>
 </div>
+
+<!-- DETAILS BELOW CAMERA -->
+<div id="cards" class="p-3 space-y-3"></div>
 
 <script>
 const video = document.getElementById("video");
@@ -44,25 +53,14 @@ let model;
 let poseLandmarks = null;
 const tracked = {};
 
-/* ---------------- BACK CAMERA ---------------- */
-navigator.mediaDevices.getUserMedia({
-  video: { facingMode: "environment" }
-}).then(stream => video.srcObject = stream);
-
-/* ---------------- POSE ---------------- */
+/* -------- Pose -------- */
 const pose = new Pose({
   locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
 });
 pose.setOptions({ modelComplexity:0, smoothLandmarks:true });
 pose.onResults(r => poseLandmarks = r.poseLandmarks);
 
-/* ---------------- LOAD MODEL ---------------- */
-(async()=>{
-  model = await cocoSsd.load();
-  requestAnimationFrame(loop);
-})();
-
-/* ---------------- HELPERS ---------------- */
+/* -------- Helpers -------- */
 const speedLabel = s => s<10?"Still":s<50?"Slow":s<150?"Moving":"Fast";
 
 const direction = (dx,dy) =>
@@ -70,9 +68,9 @@ const direction = (dx,dy) =>
 
 function posture(speed){
   if(!poseLandmarks) return "Unknown";
-  if(poseLandmarks[23].y>0.65) return "Sitting";
-  if(speed<10) return "Standing";
-  if(speed<120) return "Walking";
+  if(poseLandmarks[23].y > 0.65) return "Sitting";
+  if(speed < 10) return "Standing";
+  if(speed < 120) return "Walking";
   return "Running";
 }
 
@@ -96,7 +94,28 @@ const overlap=(a,b)=>!(
   a.x+a.w<b.x||a.x>b.x+b.w||a.y+a.h<b.y||a.y>b.y+b.h
 );
 
-/* ---------------- MAIN LOOP ---------------- */
+/* -------- Start Camera (UNIVERSAL) -------- */
+document.getElementById("startCam").onclick = async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" } },
+      audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    model = await cocoSsd.load();
+    loop();
+
+  } catch (e) {
+    alert("Camera error: " + e.name);
+  }
+};
+
+/* -------- Main Loop -------- */
 async function loop(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
   const detections = await model.detect(video);
@@ -115,18 +134,16 @@ async function loop(){
     o.s=dt>0?Math.sqrt(o.dx**2+o.dy**2)/dt:0;
     o.x=cx; o.y=cy; o.t=now;
 
-    /* DRAW */
     ctx.strokeStyle="lime";
     ctx.lineWidth=2;
     ctx.strokeRect(x,y,w,h);
     ctx.fillStyle="lime";
     ctx.fillText(d.class,x+4,y+14);
 
-    /* PERSON ANALYSIS */
     let shirt="", pant="", holding="None";
     if(d.class==="person"){
-      shirt=dominantColor(x,y,w,h/2);
-      pant=dominantColor(x,y+h/2,w,h/2);
+      shirt = dominantColor(x,y,w,h/2);
+      pant  = dominantColor(x,y+h/2,w,h/2);
       for(const o2 of detections){
         if(o2.class!=="person"){
           const [ox,oy,ow,oh]=o2.bbox;
@@ -136,7 +153,6 @@ async function loop(){
       }
     }
 
-    /* CARD */
     const card=document.createElement("div");
     card.className="bg-white p-3 rounded shadow";
     card.innerHTML=`
@@ -149,7 +165,9 @@ async function loop(){
         <div>Pant: ${pant}</div>
         <div>Holding: ${holding}</div>
       `:""}
-      <div class="text-xs text-gray-500">Confidence ${(d.score*100).toFixed(1)}%</div>
+      <div class="text-xs text-gray-500">
+        Confidence ${(d.score*100).toFixed(1)}%
+      </div>
     `;
     cards.appendChild(card);
   }
