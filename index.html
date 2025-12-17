@@ -17,8 +17,8 @@
 <style>
   video {
     width: 100%;
-    border-radius: 12px;
     background: black;
+    border-radius: 16px;
   }
 </style>
 </head>
@@ -26,24 +26,28 @@
 <body class="bg-gray-100">
 
 <!-- HEADER -->
-<div class="p-3 font-bold text-lg text-center">
-  Avalok(a) – Live Vision Intelligence
+<div class="p-2 text-center font-semibold text-base">
+  Avalok(a) – Live Vision
 </div>
 
-<!-- START BUTTON -->
-<div class="flex justify-center">
+<!-- START CAMERA -->
+<div class="flex justify-center mb-2">
   <button id="startCam"
-    class="mb-3 px-6 py-2 bg-blue-600 text-white rounded-lg">
+    class="px-6 py-2 bg-blue-600 text-white rounded-lg">
     ▶ Start Camera
   </button>
 </div>
 
-<!-- CAMERA CARD -->
-<div class="mx-3 bg-white rounded-xl shadow p-2">
-  <video id="video" playsinline></video>
+<!-- BIG CAMERA CARD -->
+<div class="mx-3 bg-white rounded-2xl shadow p-2">
+  <video
+    id="video"
+    playsinline
+    class="h-[65vh] md:h-[55vh] object-cover">
+  </video>
 </div>
 
-<!-- DETAILS -->
+<!-- DETAILS BELOW CAMERA -->
 <div id="cards" class="p-3 space-y-3"></div>
 
 <script>
@@ -54,46 +58,48 @@ let model;
 let poseLandmarks = null;
 const tracked = {};
 
-/* ---------------- Pose ---------------- */
+/* ---------- MediaPipe Pose ---------- */
 const pose = new Pose({
   locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
 });
-pose.setOptions({ modelComplexity:0, smoothLandmarks:true });
+pose.setOptions({ modelComplexity: 0, smoothLandmarks: true });
 pose.onResults(r => poseLandmarks = r.poseLandmarks);
 
-/* ---------------- Helpers ---------------- */
-const speedLabel = s => s<10?"Still":s<50?"Slow":s<150?"Moving":"Fast";
+/* ---------- Helpers ---------- */
+const speedLabel = s =>
+  s < 10 ? "Still" : s < 50 ? "Slow" : s < 150 ? "Moving" : "Fast";
 
-function posture(speed){
-  if(!poseLandmarks) return "Unknown";
-  if(poseLandmarks[23].y > 0.65) return "Sitting";
-  if(speed < 10) return "Standing";
-  if(speed < 120) return "Walking";
+function posture(speed) {
+  if (!poseLandmarks) return "Unknown";
+  if (poseLandmarks[23].y > 0.65) return "Sitting";
+  if (speed < 10) return "Standing";
+  if (speed < 120) return "Walking";
   return "Running";
 }
 
-function dominantColor(x,y,w,h){
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext("2d");
-  ctx.drawImage(video, x, y, w, h, 0, 0, w, h);
-  const d = ctx.getImageData(0,0,w,h).data;
-  let r=0,g=0,b=0,c=0;
-  for(let i=0;i<d.length;i+=40){
-    r+=d[i]; g+=d[i+1]; b+=d[i+2]; c++;
+function dominantColor(x, y, w, h) {
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  const cx = c.getContext("2d");
+  cx.drawImage(video, x, y, w, h, 0, 0, w, h);
+  const d = cx.getImageData(0, 0, w, h).data;
+
+  let r=0,g=0,b=0,cnt=0;
+  for (let i=0;i<d.length;i+=40){
+    r+=d[i]; g+=d[i+1]; b+=d[i+2]; cnt++;
   }
-  r/=c; g/=c; b/=c;
-  if(r>200&&g<100&&b<100) return "Red";
-  if(r<100&&g>200&&b<100) return "Green";
-  if(r<100&&g<100&&b>200) return "Blue";
-  if(r>200&&g>200&&b<100) return "Yellow";
-  if(r>200&&g>200&&b>200) return "White";
-  if(r<80&&g<80&&b<80) return "Black";
+  r/=cnt; g/=cnt; b/=cnt;
+
+  if (r>200 && g<100 && b<100) return "Red";
+  if (r<100 && g>200 && b<100) return "Green";
+  if (r<100 && g<100 && b>200) return "Blue";
+  if (r>200 && g>200 && b<100) return "Yellow";
+  if (r>200 && g>200 && b>200) return "White";
+  if (r<80 && g<80 && b<80) return "Black";
   return "Mixed";
 }
 
-/* ---------------- Start Camera ---------------- */
+/* ---------- Start Camera (Universal) ---------- */
 document.getElementById("startCam").onclick = async () => {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -105,33 +111,35 @@ document.getElementById("startCam").onclick = async () => {
 
     model = await cocoSsd.load();
     loop();
-
   } catch (e) {
     alert("Camera error: " + e.name);
   }
 };
 
-/* ---------------- Main Loop ---------------- */
-async function loop(){
+/* ---------- Main Loop ---------- */
+async function loop() {
   const detections = await model.detect(video);
   const now = performance.now();
   cards.innerHTML = "";
 
-  for(const d of detections){
+  for (const d of detections) {
     const [x,y,w,h] = d.bbox;
-    const cx=x+w/2, cy=y+h/2;
-    const id=d.class+"-"+Math.round(cx);
+    const cx = x + w/2;
+    const cy = y + h/2;
+    const id = d.class + "-" + Math.round(cx);
 
-    if(!tracked[id]) tracked[id]={x:cx,y:cy,t:now,s:0};
-    const o=tracked[id];
-    const dt=(now-o.t)/1000;
-    o.s = dt>0 ? Math.hypot(cx-o.x, cy-o.y)/dt : 0;
-    o.x=cx; o.y=cy; o.t=now;
+    if (!tracked[id])
+      tracked[id] = { x: cx, y: cy, t: now, s: 0 };
 
-    let extra="";
-    if(d.class==="person"){
-      const shirt = dominantColor(x,y,w,h/2);
-      const pant  = dominantColor(x,y+h/2,w,h/2);
+    const o = tracked[id];
+    const dt = (now - o.t) / 1000;
+    o.s = dt > 0 ? Math.hypot(cx - o.x, cy - o.y) / dt : 0;
+    o.x = cx; o.y = cy; o.t = now;
+
+    let extra = "";
+    if (d.class === "person") {
+      const shirt = dominantColor(x, y, w, h/2);
+      const pant  = dominantColor(x, y+h/2, w, h/2);
       extra = `
         <div>Posture: ${posture(o.s)}</div>
         <div>Shirt: ${shirt}</div>
@@ -139,10 +147,10 @@ async function loop(){
       `;
     }
 
-    const card=document.createElement("div");
-    card.className="bg-white rounded-xl shadow p-4";
-    card.innerHTML=`
-      <div class="font-bold text-lg capitalize">${d.class}</div>
+    const card = document.createElement("div");
+    card.className = "bg-white rounded-xl shadow p-4";
+    card.innerHTML = `
+      <div class="font-semibold text-lg capitalize">${d.class}</div>
       <div>Speed: ${speedLabel(o.s)}</div>
       ${extra}
       <div class="text-xs text-gray-500 mt-1">
@@ -152,7 +160,7 @@ async function loop(){
     cards.appendChild(card);
   }
 
-  pose.send({image:video});
+  pose.send({ image: video });
   requestAnimationFrame(loop);
 }
 </script>
